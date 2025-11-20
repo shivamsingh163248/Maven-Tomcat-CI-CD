@@ -58,8 +58,7 @@ COPY tomcat-users.xml /usr/local/tomcat/conf/tomcat-users.xml
 
 # Create directories and set permissions
 RUN mkdir -p /usr/local/tomcat/logs && \
-    chmod +x /usr/local/tomcat/bin/*.sh && \
-    chown -R 1000:1000 /usr/local/tomcat
+    chmod +x /usr/local/tomcat/bin/*.sh
 
 # Set environment variables
 ENV CATALINA_HOME=/usr/local/tomcat \
@@ -70,8 +69,12 @@ ENV CATALINA_HOME=/usr/local/tomcat \
     APP_BRANCH="${BRANCH}" \
     APP_COMMIT="${COMMIT}"
 
-# Create non-root user for security
-RUN groupadd -r tomcat && useradd -r -g tomcat -u 1000 tomcat
+# Use the existing tomcat user from base image or create if not exists
+RUN if ! id tomcat > /dev/null 2>&1; then \
+        groupadd -r tomcat && useradd -r -g tomcat tomcat; \
+    fi && \
+    chown -R tomcat:tomcat /usr/local/tomcat
+
 USER tomcat
 
 # Expose port
@@ -81,21 +84,18 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8080/webapp-demo/ || exit 1
 
-# Add startup script for better logging
-COPY --chown=tomcat:tomcat <<EOF /usr/local/tomcat/bin/startup-with-info.sh
-#!/bin/bash
-echo "==================================="
-echo "Starting Tomcat Web Application"
-echo "Version: \${APP_VERSION:-unknown}"
-echo "Branch: \${APP_BRANCH:-unknown}" 
-echo "Commit: \${APP_COMMIT:-unknown}"
-echo "Java Version: \$(java -version 2>&1 | head -n 1)"
-echo "Tomcat Version: \$(catalina.sh version | grep 'Server version')"
-echo "==================================="
-exec catalina.sh run
-EOF
-
-RUN chmod +x /usr/local/tomcat/bin/startup-with-info.sh
+# Create startup script for better logging
+RUN echo '#!/bin/bash\n\
+echo "==================================="\n\
+echo "Starting Tomcat Web Application"\n\
+echo "Version: ${APP_VERSION:-unknown}"\n\
+echo "Branch: ${APP_BRANCH:-unknown}"\n\
+echo "Commit: ${APP_COMMIT:-unknown}"\n\
+echo "Java Version: $(java -version 2>&1 | head -n 1)"\n\
+echo "Tomcat Version: $(catalina.sh version | grep '\''Server version'\'')"\n\
+echo "==================================="\n\
+exec catalina.sh run' > /usr/local/tomcat/bin/startup-with-info.sh && \
+    chmod +x /usr/local/tomcat/bin/startup-with-info.sh
 
 # Start Tomcat with info
 CMD ["/usr/local/tomcat/bin/startup-with-info.sh"]
