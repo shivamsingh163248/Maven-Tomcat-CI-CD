@@ -3,8 +3,13 @@ FROM maven:3.9.7-eclipse-temurin-21 AS build
 
 # Build arguments
 ARG VERSION=development
+ARG SEMANTIC_VERSION=0.0.0-dev
 ARG BRANCH=unknown
 ARG COMMIT=unknown
+ARG BUILD_DATE
+ARG BUILD_TIME
+ARG GITHUB_SHA
+ARG GITHUB_REF
 
 # Set working directory
 WORKDIR /app
@@ -26,21 +31,37 @@ FROM tomcat:10.1-jdk21-temurin
 
 # Build arguments for metadata
 ARG VERSION=development
+ARG SEMANTIC_VERSION=0.0.0-dev
 ARG BRANCH=unknown
 ARG COMMIT=unknown
 ARG BUILD_DATE
+ARG BUILD_TIME
 ARG GITHUB_SHA
+ARG GITHUB_REF
 
-# Add metadata labels
+# Add comprehensive metadata labels
 LABEL org.opencontainers.image.title="Maven Tomcat Web Application" \
-      org.opencontainers.image.description="Java Web Application built with Maven and deployed on Tomcat" \
+      org.opencontainers.image.description="Java Web Application built with Maven and deployed on Tomcat - Branch: ${BRANCH}" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.created="${BUILD_DATE}T${BUILD_TIME}Z" \
+      org.opencontainers.image.source="https://github.com/shivamsingh163248/Maven-Tomcat-CI-CD" \
+      org.opencontainers.image.url="https://github.com/shivamsingh163248/Maven-Tomcat-CI-CD" \
+      org.opencontainers.image.documentation="https://github.com/shivamsingh163248/Maven-Tomcat-CI-CD/blob/main/README.md" \
+      org.opencontainers.image.vendor="shivamsingh163248" \
+      \
       app.version="${VERSION}" \
+      app.semantic-version="${SEMANTIC_VERSION}" \
       app.branch="${BRANCH}" \
       app.commit="${COMMIT}" \
-      app.build-date="${BUILD_DATE}"
+      app.build-date="${BUILD_DATE}" \
+      app.build-time="${BUILD_TIME}" \
+      app.github-sha="${GITHUB_SHA}" \
+      app.github-ref="${GITHUB_REF}" \
+      app.java-version="21" \
+      app.maven-version="3.9.7" \
+      app.tomcat-version="10.1" \
+      app.port="8080"
 
 # Install curl for health checks
 RUN apt-get update && \

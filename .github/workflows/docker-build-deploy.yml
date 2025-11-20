@@ -25,8 +25,11 @@ jobs:
     
     outputs:
       version: ${{ steps.version.outputs.version }}
+      semantic-version: ${{ steps.version.outputs.semantic-version }}
       branch: ${{ steps.branch.outputs.branch }}
       commit-sha: ${{ steps.version.outputs.commit-sha }}
+      build-date: ${{ steps.version.outputs.build-date }}
+      build-time: ${{ steps.version.outputs.build-time }}
     
     steps:
       - name: 📥 Checkout Repository
@@ -52,14 +55,55 @@ jobs:
       - name: 🔢 Generate Version
         id: version
         run: |
+          # Get current date and time for versioning
+          DATE=$(date +'%Y.%m.%d')
+          TIME=$(date +'%H%M')
+          COMMIT_SHORT=${GITHUB_SHA::8}
+          BRANCH_CLEAN=${{ steps.branch.outputs.branch }}
+          
+          # Generate semantic-like version based on context
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # For tagged releases, use the tag as version
             VERSION=${{ github.ref_name }}
+            SEMANTIC_VERSION=${{ github.ref_name }}
           else
-            VERSION="${{ steps.branch.outputs.branch }}-$(date +'%Y%m%d')-${GITHUB_SHA::8}"
+            # For branch pushes, create semantic version
+            case "$BRANCH_CLEAN" in
+              "main")
+                SEMANTIC_VERSION="1.${DATE//.}.${TIME}"
+                VERSION="v${SEMANTIC_VERSION}"
+                ;;
+              "develop")
+                SEMANTIC_VERSION="0.${DATE//.}.${TIME}-dev"
+                VERSION="v${SEMANTIC_VERSION}"
+                ;;
+              "feature-"*)
+                FEATURE_NAME=${BRANCH_CLEAN#feature-}
+                SEMANTIC_VERSION="0.${DATE//.}.${TIME}-${FEATURE_NAME}"
+                VERSION="v${SEMANTIC_VERSION}"
+                ;;
+              "release-"*)
+                RELEASE_NAME=${BRANCH_CLEAN#release-}
+                SEMANTIC_VERSION="${RELEASE_NAME}.${DATE//.}.${TIME}-rc"
+                VERSION="v${SEMANTIC_VERSION}"
+                ;;
+              *)
+                SEMANTIC_VERSION="0.${DATE//.}.${TIME}-${BRANCH_CLEAN}"
+                VERSION="v${SEMANTIC_VERSION}"
+                ;;
+            esac
           fi
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "commit-sha=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+          echo "semantic-version=$SEMANTIC_VERSION" >> $GITHUB_OUTPUT
+          echo "commit-sha=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "build-date=$DATE" >> $GITHUB_OUTPUT
+          echo "build-time=$TIME" >> $GITHUB_OUTPUT
+          
           echo "Generated version: $VERSION"
+          echo "Semantic version: $SEMANTIC_VERSION"
+          echo "Branch: $BRANCH_CLEAN"
+          echo "Commit: $COMMIT_SHORT"
 
       - name: ☕ Set up JDK 21
         uses: actions/setup-java@v4
@@ -119,8 +163,17 @@ jobs:
           echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** ${{ steps.branch.outputs.source-branch }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Semantic Version:** ${{ steps.version.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date:** ${{ steps.version.outputs.build-date }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** ${{ steps.version.outputs.commit-sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏷️ Expected Docker Tags:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`latest\` (main branch only)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ steps.version.outputs.semantic-version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ steps.version.outputs.build-date }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ steps.version.outputs.commit-sha }}\`" >> $GITHUB_STEP_SUMMARY
 
   # Job 2: Build and Push Docker Image
   docker-build-push:
@@ -156,26 +209,61 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Branch-based tags
-            type=ref,event=branch
-            # Tag-based releases
-            type=ref,event=tag
-            # Latest for main branch
+            # Latest tags for easy identification
             type=raw,value=latest,enable={{is_default_branch}}
-            # Version from build job
+            type=raw,value=stable,enable={{is_default_branch}}
+            
+            # Semantic version tags (primary identification)
             type=raw,value=${{ needs.build-and-test.outputs.version }}
-            # Commit SHA
+            type=raw,value=${{ needs.build-and-test.outputs.semantic-version }}
+            
+            # Branch-based tags for environment identification
+            type=raw,value={{branch}},enable=${{ needs.build-and-test.outputs.branch == 'main' }}
+            type=raw,value={{branch}}-latest,enable=${{ needs.build-and-test.outputs.branch == 'develop' }}
+            type=raw,value=dev-latest,enable=${{ needs.build-and-test.outputs.branch == 'develop' }}
+            
+            # Date-based tags for chronological identification
+            type=raw,value=${{ needs.build-and-test.outputs.build-date }}
+            type=raw,value=${{ needs.build-and-test.outputs.build-date }}-${{ needs.build-and-test.outputs.commit-sha }}
+            
+            # Commit-based tags for exact identification
             type=sha,prefix={{branch}}-,format=short
+            type=raw,value=${{ needs.build-and-test.outputs.commit-sha }}
+            
+            # Environment-specific tags
+            type=raw,value=production,enable={{is_default_branch}}
+            type=raw,value=staging,enable=${{ needs.build-and-test.outputs.branch == 'develop' }}
+            
+            # Feature branch tags
+            type=ref,event=branch,suffix=-{{sha}}
+            
+            # Release candidate tags
+            type=ref,event=tag,suffix=-release
           labels: |
             org.opencontainers.image.title=Maven Tomcat Web App
-            org.opencontainers.image.description=Java Web Application with Maven and Tomcat
+            org.opencontainers.image.description=Java Web Application with Maven and Tomcat - Branch: ${{ needs.build-and-test.outputs.branch }}
             org.opencontainers.image.vendor=${{ github.repository_owner }}
             org.opencontainers.image.version=${{ needs.build-and-test.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/main/README.md
+            
+            # Application-specific labels
             app.version=${{ needs.build-and-test.outputs.version }}
+            app.semantic-version=${{ needs.build-and-test.outputs.semantic-version }}
             app.branch=${{ needs.build-and-test.outputs.branch }}
             app.commit=${{ needs.build-and-test.outputs.commit-sha }}
+            app.build-date=${{ needs.build-and-test.outputs.build-date }}
+            app.build-time=${{ needs.build-and-test.outputs.build-time }}
+            app.java-version=21
+            app.maven-version=3.9.7
+            app.tomcat-version=10.1
+            
+            # Environment labels
+            app.environment=${{ needs.build-and-test.outputs.branch == 'main' && 'production' || (needs.build-and-test.outputs.branch == 'develop' && 'staging' || 'development') }}
+            app.stability=${{ needs.build-and-test.outputs.branch == 'main' && 'stable' || 'testing' }}
 
       - name: 🏗️ Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -193,8 +281,13 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ needs.build-and-test.outputs.version }}
+            SEMANTIC_VERSION=${{ needs.build-and-test.outputs.semantic-version }}
             BRANCH=${{ needs.build-and-test.outputs.branch }}
             COMMIT=${{ needs.build-and-test.outputs.commit-sha }}
+            BUILD_DATE=${{ needs.build-and-test.outputs.build-date }}
+            BUILD_TIME=${{ needs.build-and-test.outputs.build-time }}
+            GITHUB_SHA=${{ github.sha }}
+            GITHUB_REF=${{ github.ref_name }}
 
       - name: 🏷️ Image Digest
         run: |
@@ -203,17 +296,32 @@ jobs:
           echo "- **Repository:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** ${{ needs.build-and-test.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ needs.build-and-test.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Semantic Version:** ${{ needs.build-and-test.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date:** ${{ needs.build-and-test.outputs.build-date }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Platforms:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 Available Tags:" >> $GITHUB_STEP_SUMMARY
-          tags="${{ steps.meta.outputs.tags }}"
-          for tag in $tags; do
-            echo "- \`$tag\`" >> $GITHUB_STEP_SUMMARY
-          done
+          
+          echo "### 🎯 Recommended Tags for Different Use Cases:" >> $GITHUB_STEP_SUMMARY
+          echo "| Use Case | Tag | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Latest Stable** | \`latest\` | Always points to latest main branch |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Specific Version** | \`${{ needs.build-and-test.outputs.version }}\` | Exact build version |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Semantic Version** | \`${{ needs.build-and-test.outputs.semantic-version }}\` | Semantic versioning |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Date-based** | \`${{ needs.build-and-test.outputs.build-date }}\` | Build by date |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit-specific** | \`${{ needs.build-and-test.outputs.commit-sha }}\` | Exact commit |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | \`production\`/\`staging\` | Environment-specific |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🚀 Pull Command:" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🚀 Quick Pull Commands:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Latest stable (recommended for production)" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Specific version (recommended for reproducible deployments)" >> $GITHUB_STEP_SUMMARY
           echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-test.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Semantic version" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-test.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   # Job 3: Security Scan (runs in parallel with docker build)
