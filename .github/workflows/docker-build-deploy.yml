@@ -69,7 +69,7 @@ jobs:
           cache: maven
 
       - name: 📦 Cache Maven Dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.m2
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
@@ -98,14 +98,14 @@ jobs:
           mvn package -DskipTests -B
 
       - name: 📤 Upload WAR Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: webapp-war-${{ steps.version.outputs.version }}
           path: target/*.war
           retention-days: 30
 
       - name: 📤 Upload Test Reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-reports-${{ steps.version.outputs.version }}
@@ -138,7 +138,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 📥 Download WAR Artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: webapp-war-${{ needs.build-and-test.outputs.version }}
           path: target/
@@ -241,7 +241,7 @@ jobs:
         continue-on-error: true
 
       - name: 📤 Upload Security Reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-reports-${{ needs.build-and-test.outputs.version }}
